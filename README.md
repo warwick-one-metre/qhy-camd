@@ -35,20 +35,18 @@ The configuration options are:
 
 The first step is to download and install the QHY Linux SDK from their website.
 
-**TODO: Create a RPM package for this and make `qhy-camera-server` depend on it.**
+First run the `install.sh` script and then compile and install the PCI-e driver in `<sdk dir>/usr/local/riffa_linux_driver/`
 
 The automated packaging scripts will push 4 RPM packages to the observatory package repository:
 
-**TODO: Create the clasp-qhy-config package and actually build these packages once we have the clasp system ready to go**
-
 | Package           | Description |
 | ----------------- | ------ |
-| clasp-qhy-config  | Contains the json configuration files for the CLASP instrument. |
+| clasp-qhy-data  | Contains the json configuration files for the CLASP instrument. |
 | qhy-camera-server | Contains the `qhy_camd` server and systemd service files for the camera server. |
 | qhy-camera-client | Contains the `cam` commandline utility for controlling the camera server. |
 | python3-warwick-qhy-camera | Contains the python module with shared code. |
 
-The `qhy-camera-server` and `clasp-qhy-config` packages should be installed on the CLASP DAS machines, then the systemd service should be enabled:
+The `qhy-camera-server` and `clasp-qhy-data` packages should be installed on the CLASP DAS machines, then the systemd service should be enabled:
 ```
 sudo systemctl enable qhy_camd.service@<config>
 sudo systemctl start qhy_camd@<config>

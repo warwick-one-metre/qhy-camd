@@ -11,9 +11,10 @@ all:
 	mkdir -p build
 	cp qhy_camd qhy_camd.bak
 	awk '{sub("SOFTWARE_VERSION = .*$$","SOFTWARE_VERSION = \"$(SERVER_VERSION) ($(GIT_VERSION))\""); print $0}' qhy_camd.bak > qhy_camd
-	${RPMBUILD} -ba qhy-camera-server.spec
-	${RPMBUILD} -ba qhy-camera-client.spec
-	${RPMBUILD} -ba python3-warwick-qhy-camera.spec
+	${RPMBUILD} -ba observatory-qhy-camera-server.spec
+	${RPMBUILD} -ba observatory-qhy-camera-client.spec
+	${RPMBUILD} -ba python3-warwick-observatory-qhy-camera.spec
+	${RPMBUILD} -ba clasp-qhy-camera-data.spec
 	mv build/noarch/*.rpm .
 	rm -rf build
 	mv qhy_camd.bak qhy_camd
