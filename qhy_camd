@@ -66,6 +66,7 @@ def open_device(driver, camera_device_id):
     """Returns None if device is not found"""
     # Enumerate cameras to find target
     camera_count = driver.ScanQHYCCD()
+    print('found {} cameras'.format(camera_count))
 
     device_id_buf = create_string_buffer(32)
     for i in range(camera_count):
