@@ -1,0 +1,16 @@
+{
+  "daemon": "clasp_camera_1",
+  "pipeline_daemon": "clasp_pipeline",
+  "pipeline_handover_timeout": 10,
+  "log_name": "qhy_camd@test",
+  "control_machines": ["CLASPTCS"],
+  "camera_device_id": "QHY600MPCIE-2c52f645aa1c25b98",
+  "temperature_setpoint": -5,
+  "temperature_query_delay": 1,
+  "gain": 26,
+  "offset": 140,
+  "camera_id": "CAM1",
+  "output_path": "/var/tmp/",
+  "output_prefix": "cam1",
+  "expcount_path": "/var/tmp/cam1-counter.json"
+}
