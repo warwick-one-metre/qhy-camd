@@ -288,7 +288,7 @@ class CameraDaemon:
             # This may block if the pipeline is busy
             try:
                 with self._config.pipeline_daemon.connect(self._config.pipeline_handover_timeout) as pipeline:
-                    pipeline.notify_frame(self._config.camera_id, path)
+                    pipeline.notify_frame(self._config.camera_id, filename)
             except Exception as e:
                 self._stop_acquisition = True
                 print('Failed to hand frame to pipeline: ' + str(e))
