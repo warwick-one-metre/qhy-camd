@@ -24,7 +24,7 @@
 # pylint: disable=too-many-statements
 
 import argparse
-from ctypes import c_bool, c_double, c_int, c_uint16, c_uint32, c_void_p, byref, create_string_buffer, CDLL, POINTER
+from ctypes import c_bool, c_double, c_int, c_uint8, c_uint16, c_uint32, c_void_p, byref, create_string_buffer, Structure, CDLL, POINTER
 import json
 from multiprocessing import Process, Queue, Value
 import os.path
@@ -60,11 +60,98 @@ class QHYControl:
     CURPWM = 15
     MANUALPWM = 16
     COOLER = 18
+    GPS = 36
 
+
+class GPSData(Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("SequenceNumber", c_uint32.__ctype_be__),
+        ("unused1", c_uint8),
+        ("ImageWidth", c_uint16.__ctype_be__),
+        ("ImageHeight", c_uint16.__ctype_be__),
+        ("_Latitude", c_uint32.__ctype_be__),
+        ("_Longitude", c_uint32.__ctype_be__),
+        ("StartFlag", c_uint8),
+        ("StartSeconds", c_uint32.__ctype_be__),
+        ("StartCounts", 3 * c_uint8),
+        ("EndFlag", c_uint8),
+        ("EndSeconds", c_uint32.__ctype_be__),
+        ("EndCounts", 3 * c_uint8),
+        ("NowFlag", c_uint8),
+        ("NowSeconds", c_uint32.__ctype_be__),
+        ("NowCounts", 3 * c_uint8),
+        ("_PPSDelta", 3 * c_uint8),
+    ]
+
+    @classmethod
+    def create_timestamp(cls, seconds, count_bytes):
+        # Timestamps are encoded as the number of seconds since 2450000.5 JD plus number of
+        # 10MHz (0.1us) clock cycles (not microseconds!).
+        counts = int.from_bytes(count_bytes, byteorder='big', signed=False)
+        return Time((seconds + counts / 1e7) / (3600 * 24) + 2450000.5, format='jd').isot
+
+    @classmethod
+    def create_status(cls, flag):
+        return [
+            'OFFLINE',
+            'SEARCHING',
+            'LOCKING',
+            'LOCKED'
+        ][(flag // 16) % 4]
+
+    @property
+    def Latitude(self):
+        # Latitude is encoded as 10 digits
+        # First digit is a sign indicator (1 means negative, 0 positive)
+        # Next two digits provide the degree component
+        # Remaining seven digits provide fractional component as decimal minutes
+        minutes = (self._Latitude % 10000000) / 100000
+        degrees = (self._Latitude // 10000000) % 100
+        sign = -1 if self._Latitude > 1000000000 else 1
+        return sign * (degrees + minutes / 60)
+
+    @property
+    def Longitude(self):
+        # Longitude is encoded as 10 digits
+        # First digit is a sign indicator (1 means negative, 0 positive)
+        # Next three digits provide the degree component
+        # Remaining six digits provide fractional component as decimal minutes
+        minutes = (self._Longitude % 1000000) / 10000
+        degrees = (self._Longitude // 1000000) % 100
+        sign = -1 if self._Longitude > 1000000000 else 1
+        return sign * (degrees + minutes / 60)
+
+    @property
+    def StartTimestamp(self):
+        return GPSData.create_timestamp(self.StartSeconds, self.StartCounts)
+
+    @property
+    def StartStatus(self):
+        return GPSData.create_status(self.StartFlag)
+
+    @property
+    def EndTimestamp(self):
+        return GPSData.create_timestamp(self.EndSeconds, self.EndCounts)
+
+    @property
+    def EndStatus(self):
+        return GPSData.create_status(self.EndFlag)
+
+    @property
+    def NowTimestamp(self):
+        return GPSData.create_timestamp(self.NowSeconds, self.NowCounts)
+
+    @property
+    def NowStatus(self):
+        return GPSData.create_status(self.NowFlag)
+
+    @property
+    def PPSDelta(self):
+        return int.from_bytes(self._PPSDelta, byteorder='big', signed=False)
 
 def process_frames(process_queue, stop_signal, camera_id, camera_device_id,
-                   camera_gain, camera_offset,
-                   output_path,
+                   camera_gain, camera_offset, use_gpsbox, output_path,
                    log_name, pipeline_daemon_name, pipeline_handover_timeout):
     """
     Helper process to save frames to disk.
@@ -108,6 +195,26 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id,
             ('EXPCNT', frame['exposure_count'], 'running exposure count since EXPCREF'),
             ('EXPCREF', frame['exposure_count_reference'], 'date the exposure counter was reset'),
         ]
+
+        # Parse timestamps out of the first row of pixel data
+        # This feature appears to be under active development by QHY, and is not yet working properly
+        # Record the values for debugging, but don't yet trust them for timekeeping
+        if use_gpsbox:
+            gps = GPSData.from_address(frame['data'].ctypes.data)
+            header += [
+                (None, None, None),
+                ('COMMENT', ' ---             GPS INFORMATION             --- ', ''),
+                ('GPS-SEQN', gps.SequenceNumber, 'exposure sequence number'),
+                ('GPS-LAT', gps.Latitude, '[deg] latitude reported by the camera GPS'),
+                ('GPS-LON', gps.Longitude, '[deg] longitude reported by the camera GPS'),
+                ('GPS-BEG', gps.StartTimestamp, 'timestamp when the exposure started'),
+                ('GPS-BEGS', gps.StartStatus, 'gps status at GPS-BEG timestamp'),
+                ('GPS-END', gps.EndTimestamp, 'timestamp when the exposure ended'),
+                ('GPS-ENDS', gps.EndStatus, 'gps status at GPS-END timestamp'),
+                ('GPS-NOW', gps.NowTimestamp, 'timestamp of a vertical sync'),
+                ('GPS-NOWS', gps.NowStatus, 'gps status at GPS-NOW timestamp'),
+                ('GPS-PPSD', gps.PPSDelta, 'number of oscillator counts between PPS pulses')
+            ]
 
         hdu = fits.PrimaryHDU(frame['data'])
 
@@ -241,9 +348,9 @@ class CameraDaemon:
         self._processing_stop_signal = Value(c_bool, False)
 
         processing_process = Process(target=process_frames, args=(
-            self._processing_queue, self._processing_stop_signal, config.camera_id, self._config.camera_device_id,
-            self._config.gain, self._config.offset, config.output_path, config.log_name, config.pipeline_daemon_name,
-            config.pipeline_handover_timeout))
+            self._processing_queue, self._processing_stop_signal, config.camera_id, config.camera_device_id,
+            config.gain, config.offset, config.use_gpsbox, config.output_path, config.log_name,
+            config.pipeline_daemon_name, config.pipeline_handover_timeout))
         processing_process.daemon = True
         processing_process.start()
 
@@ -527,6 +634,13 @@ class CameraDaemon:
                 self._readout_width = image_width.value
                 self._readout_height = image_height.value
 
+                # Enable GPS timestamping
+                if self._config.use_gpsbox:
+                    status = driver.SetQHYCCDParam(handle, QHYControl.GPS, c_double(1))
+                    if status != QHYStatus.Success:
+                        print('failed to set GPS box with status {}'.format(status))
+                        return CommandStatus.Failed
+
                 # Set default temperature
                 if self._target_temperature is not None:
                     status = driver.SetQHYCCDParam(handle, QHYControl.COOLER, c_double(self._target_temperature))
@@ -568,7 +682,7 @@ class CameraDaemon:
 
                 self._geometry_image_x1 = effective_x.value + 1
                 self._geometry_image_x2 = effective_x.value + effective_width.value
-                self._geometry_image_y1 = effective_y.value + 1
+                self._geometry_image_y1 = effective_y.value + 2 if self._config.use_gpsbox else 1
                 self._geometry_image_y2 = effective_y.value + effective_height.value
 
                 with self._driver_lock:

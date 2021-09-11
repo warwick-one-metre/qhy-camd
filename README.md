@@ -24,6 +24,7 @@ The configuration options are:
   "temperature_query_delay": 1, # Amount of time in seconds to wait between querying the camera temperature and cooling status
   "gain": 26, # Gain setting for the CMOS sensor. See the QHY600 spec sheet for details on the implications on signal and read noise.
   "offset": 140, # Bias setting for the CMOS sensor.
+  "use_gpsbox": true, # Use attached GPS Box to measure exposure timestamps.
   "camera_id": "TEST", # Value to use for the CAMERA fits header keyword.
   "output_path": "/var/tmp/", # Path to save temporary output frames before they are handed to the pipeline daemon. This should match the pipeline incoming_data_path setting.
   "output_prefix": "test", # Filename prefix to use for temporary output frames.

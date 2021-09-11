@@ -24,7 +24,7 @@ CONFIG_SCHEMA = {
     'additionalProperties': False,
     'required': [
         'daemon', 'pipeline_daemon', 'pipeline_handover_timeout', 'log_name', 'control_machines', 'camera_device_id',
-        'camera_id', 'temperature_setpoint', 'temperature_query_delay', 'gain', 'offset',
+        'camera_id', 'temperature_setpoint', 'temperature_query_delay', 'gain', 'offset', 'use_gpsbox',
         'output_path', 'output_prefix', 'expcount_path'
     ],
     'properties': {
@@ -72,6 +72,9 @@ CONFIG_SCHEMA = {
             'min': 0,
             'max': 1000,
         },
+        'use_gpsbox': {
+            'type': 'boolean',
+        },
         'camera_id': {
             'type': 'string',
         },
@@ -114,5 +117,6 @@ class Config:
         self.expcount_path = config_json['expcount_path']
         self.gain = config_json['gain']
         self.offset = config_json['offset']
+        self.use_gpsbox = config_json['use_gpsbox']
         self.temperature_setpoint = config_json['temperature_setpoint']
         self.temperature_query_delay = config_json['temperature_query_delay']

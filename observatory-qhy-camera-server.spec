@@ -1,5 +1,5 @@
 Name:      observatory-qhy-camera-server
-Version:   20210911
+Version:   20210921
 Release:   0
 Url:       https://github.com/warwick-one-metre/qhy-camd
 Summary:   Control server for QHY600 CMOS camera
