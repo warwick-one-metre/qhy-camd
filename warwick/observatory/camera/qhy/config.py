@@ -103,7 +103,7 @@ class Config:
         })
 
         self.daemon = getattr(daemons, config_json['daemon'])
-        self.pipeline_daemon = getattr(daemons, config_json['pipeline_daemon'])
+        self.pipeline_daemon_name = config_json['pipeline_daemon']
         self.pipeline_handover_timeout = config_json['pipeline_handover_timeout']
         self.log_name = config_json['log_name']
         self.control_ips = [getattr(IP, machine) for machine in config_json['control_machines']]

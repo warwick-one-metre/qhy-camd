@@ -24,8 +24,10 @@
 # pylint: disable=too-many-statements
 
 import argparse
-from ctypes import c_double, c_int, c_uint16, c_uint32, c_void_p, byref, create_string_buffer, CDLL, POINTER
+from ctypes import c_bool, c_double, c_int, c_uint16, c_uint32, c_void_p, byref, create_string_buffer, CDLL, POINTER
 import json
+from multiprocessing import Process, Queue, Value
+import os.path
 import pathlib
 import queue
 import shutil
@@ -36,7 +38,7 @@ from astropy.time import Time
 import astropy.units as u
 import numpy as np
 import Pyro4
-from warwick.observatory.common import log, TryLock
+from warwick.observatory.common import daemons, log, TryLock
 from warwick.observatory.common.helpers import pyro_client_matches
 from warwick.observatory.camera.qhy import Config, CommandStatus, CameraStatus
 
@@ -60,6 +62,85 @@ class QHYControl:
     COOLER = 18
     HUMIDITY = 62
     PRESSURE = 63
+
+
+def process_frames(process_queue, stop_signal, camera_id, camera_device_id,
+                   camera_gain, camera_offset,
+                   output_path,
+                   log_name, pipeline_daemon_name, pipeline_handover_timeout):
+    """
+    Helper process to save frames to disk.
+    This uses a process (rather than a thread) to avoid the GIL stalling frame acquisition
+    """
+    pipeline_daemon = getattr(daemons, pipeline_daemon_name)
+    while True:
+        frame = process_queue.get()
+
+        header = [
+            (None, None, None),
+            ('COMMENT', ' ---                DATE/TIME                --- ', ''),
+            ('DATE-OBS', frame['start_time'], '[UTC] exposure start time from TIME-SRC'),
+            ('TIME-SRC', 'NTP', 'DATE-OBS is a NTP-synced PC clock timestamp'),
+            ('EXPTIME', round(frame['exposure'], 3), '[s] exposure length'),
+            ('PC-RDEND', frame['read_end_time'], '[UTC] local PC time when readout completed'),
+            (None, None, None),
+            ('COMMENT', ' ---           CAMERA INFORMATION            --- ', ''),
+            ('CAMSWVER', SOFTWARE_VERSION, 'camera server software version'),
+            ('SDKVER', frame['sdk_version'], 'QHY SDK version'),
+            ('FWVER', frame['firmware_version'], 'camera firmware version'),
+            ('CAMID', camera_id, 'camera identifier'),
+            ('CAMERA', camera_device_id, 'camera model and serial number'),
+            ('CAM-GAIN', camera_gain, 'CMOS gain setting'),
+            ('CAM-OFST', camera_offset, 'CMOS offset setting'),
+            ('CAM-TEMP', round(frame['temperature'], 2),
+             '[deg c] CMOS temperature at end of exposure'),
+            ('SET-TEMP', frame['target_temperature'], '[deg c] CMOS temperature set point'),
+            ('TEMP-LCK', frame['temperature_locked'],
+             'CMOS temperature is locked to set point'),
+            ('CAM-PRES', round(frame['pressure'], 2), '[mbar] CMOS pressure sensor at end of exposure'),
+            ('CAM-HUMD', round(frame['humidity'], 2), '[%RH] CMOS humidity sensor at end of exposure'),
+            ('CAM-XBIN', 1, '[px] x binning'),
+            ('CAM-YBIN', 1, '[px] y binning'),
+            ('CAM-WIND', '[{}:{},{}:{}]'.format(
+                frame['win_x'], frame['win_x'] + frame['win_width'] - 1,
+                frame['win_y'], frame['win_y'] + frame['win_height'] - 1),
+             '[x1:x2,y1:y2] readout region (detector coords)'),
+            ('IMAG-RGN', '[{}:{},{}:{}]'.format(
+                frame['image_x1'], frame['image_x2'],
+                frame['image_y1'], frame['image_y2']),
+             '[x1:x2,y1:y2] image region (image coords)'),
+            ('EXPCNT', frame['exposure_count'], 'running exposure count since EXPCREF'),
+            ('EXPCREF', frame['exposure_count_reference'], 'date the exposure counter was reset'),
+        ]
+
+        hdu = fits.PrimaryHDU(frame['data'])
+
+        # Using Card and append() to force comment cards to be placed inline
+        for h in header:
+            hdu.header.append(fits.Card(h[0], h[1], h[2]), end=True)
+
+        # Save errors shouldn't interfere with preview updates, so we use a separate try/catch
+        try:
+            filename = '{}-{:08d}.fits'.format(camera_id, frame['exposure_count'])
+            path = os.path.join(output_path, filename)
+
+            # Simulate an atomic write by writing to a temporary file then renaming
+            hdu.writeto(path + '.tmp', overwrite=True)
+            shutil.move(path + '.tmp', path)
+            print('Saving temporary frame: ' + filename)
+
+        except Exception as e:
+            stop_signal.value = True
+            log.error(log_name, 'Failed to save temporary frame (' + str(e) + ')')
+
+        # Hand frame over to the pipeline
+        # This may block if the pipeline is busy
+        try:
+            with pipeline_daemon.connect(pipeline_handover_timeout) as pipeline:
+                pipeline.notify_frame(camera_id, filename)
+        except Exception as e:
+            stop_signal.value = True
+            log.error(log_name, 'Failed to hand frame to pipeline (' + str(e) + ')')
 
 
 def open_device(driver, camera_device_id):
@@ -161,10 +242,16 @@ class CameraDaemon:
         status_thread.daemon = True
         status_thread.start()
 
-        # Thread for processing acquired frames
-        processing_thread = threading.Thread(target=self.__process_frames)
-        processing_thread.daemon = True
-        processing_thread.start()
+        # Subprocess for processing acquired frames
+        self._processing_queue = Queue(maxsize=1)
+        self._processing_stop_signal = Value(c_bool, False)
+
+        processing_process = Process(target=process_frames, args=(
+            self._processing_queue, self._processing_stop_signal, config.camera_id, self._config.camera_device_id,
+            self._config.gain, self._config.offset, config.output_path, config.log_name, config.pipeline_daemon_name,
+            config.pipeline_handover_timeout))
+        processing_process.daemon = True
+        processing_process.start()
 
     def __poll_camera_status(self):
         """Background thread that polls the camera status"""
@@ -215,90 +302,12 @@ class CameraDaemon:
 
             return True
 
-    def __process_frames(self):
-        """Background thread that processes acquired frames"""
-        while True:
-            data, start_time, exposure_time, read_end_time = self._processing_queue.get()
-
-            # Build metadata list
-            obs_time = start_time.strftime('%Y-%m-%dT%H:%M:%S.%f')
-
-            header = [
-                (None, None, None),
-                ('COMMENT', ' ---                DATE/TIME                --- ', ''),
-                ('DATE-OBS', obs_time, '[UTC] exposure start time from TIME-SRC'),
-                ('TIME-SRC', 'NTP', 'DATE-OBS is a NTP-synced PC clock timestamp'),
-                ('EXPTIME', round(exposure_time, 3), '[s] exposure length'),
-                ('PC-RDEND', read_end_time.strftime('%Y-%m-%dT%H:%M:%S.%f'),
-                 '[UTC] local PC time when readout completed'),
-                (None, None, None),
-                ('COMMENT', ' ---           CAMERA INFORMATION            --- ', ''),
-                ('CAMSWVER', SOFTWARE_VERSION, 'camera server software version'),
-                ('SDKVER', self._sdk_version, 'QHY SDK version'),
-                ('FWVER', self._camera_firmware_version, 'camera firmware version'),
-                ('CAMID', self._config.camera_id, 'camera identifier'),
-                ('CAMERA', self._config.camera_device_id, 'camera model and serial number'),
-                ('CAM-GAIN', self._config.gain, 'CMOS gain setting'),
-                ('CAM-OFST', self._config.offset, 'CMOS offset setting'),
-                ('CAM-TEMP', round(self._temperature, 2),
-                 '[deg c] CMOS temperature at end of exposure'),
-                ('SET-TEMP', self._target_temperature, '[deg c] CMOS temperature set point'),
-                ('TEMP-LCK', self._temperature_locked,
-                 'CMOS temperature is locked to set point'),
-                ('CAM-PRES', round(self._pressure, 2), '[mbar] CMOS pressure sensor at end of exposure'),
-                ('CAM-HUMD', round(self._humidity, 2), '[%RH] CMOS humidity sensor at end of exposure'),
-                ('CAM-XBIN', 1, '[px] x binning'),
-                ('CAM-YBIN', 1, '[px] y binning'),
-                ('CAM-WIND', '[{}:{},{}:{}]'.format(1, self._readout_width, 1, self._readout_height),
-                 '[x1:x2,y1:y2] ccd window (detector coords)'),
-                ('IMAG-RGN', '[{}:{},{}:{}]'.format(
-                    self._geometry_image_x1, self._geometry_image_x2,
-                    self._geometry_image_y1, self._geometry_image_y2),
-                 '[x1:x2,y1:y2] image region (image coords)'),
-                ('EXPCNT', self._exposure_count, 'running exposure count since EXPCREF'),
-                ('EXPCREF', self._exposure_count_reference, 'date the exposure counter was reset'),
-            ]
-
-            data = np.frombuffer(data, dtype=np.uint16).reshape((self._readout_height, self._readout_width))
-            hdu = fits.PrimaryHDU(data)
-
-            # Using Card and append() to force comment cards to be placed inline
-            for h in header:
-                if h[0] is not None and h[1] is None:
-                    h = ('COMMENT', ' ' + h[0] + ' not available', '')
-                hdu.header.append(fits.Card(h[0], h[1], h[2]), end=True)
-
-            try:
-                filename = self._output_frame_prefix + \
-                           '-{:08d}.fits'.format(self._exposure_count)
-                path = str(self._output_directory / filename)
-
-                # Simulate an atomic write by writing to a temporary file then renaming
-                hdu.writeto(path + '.tmp', overwrite=True)
-                shutil.move(path + '.tmp', path)
-                print('Saving temporary frame: ' + filename)
-
-            except Exception as e:
-                self._stop_acquisition = True
-                print('Failed to save temporary frame: ' + str(e))
-                log.error(self._config.log_name, 'Failed to save temporary frame (' + str(e) + ')')
-                return
-
-            # Hand frame over to the pipeline
-            # This may block if the pipeline is busy
-            try:
-                with self._config.pipeline_daemon.connect(self._config.pipeline_handover_timeout) as pipeline:
-                    pipeline.notify_frame(self._config.camera_id, filename)
-            except Exception as e:
-                self._stop_acquisition = True
-                print('Failed to hand frame to pipeline: ' + str(e))
-                log.error(self._config.log_name, 'Failed to hand frame to pipeline (' + str(e) + ')')
-
     def __run_exposure_sequence(self):
         """Worker thread that acquires frames and their times.
            Tagged frames are pushed to the acquisition queue
            for further processing on another thread"""
         try:
+            self._processing_stop_signal.value = False
             self._sequence_frame_count = 0
             with self._driver_lock:
                 exp = c_double(int(1e6 * self._exposure_time))
@@ -307,7 +316,7 @@ class CameraDaemon:
                     log.error(self._config.log_name, 'Failed to set exposure time (' + str(status) + ')')
                     return
 
-            while not self._stop_acquisition:
+            while not self._stop_acquisition and not self._processing_stop_signal.value:
                 with self._driver_lock:
                     start_time = Time.now()
                     status = self._driver.ExpQHYCCDSingleFrame(self._handle)
@@ -337,7 +346,31 @@ class CameraDaemon:
                     break
 
                 read_end_time = Time.now()
-                self._processing_queue.put((framedata, start_time, self._exposure_time, read_end_time))
+
+                self._processing_queue.put({
+                    'data': np.frombuffer(framedata, dtype=np.uint16).reshape((height.value, width.value)),
+                    'start_time': start_time.strftime('%Y-%m-%dT%H:%M:%S.%f'),
+                    'exposure': self._exposure_time,
+                    'read_end_time': read_end_time.strftime('%Y-%m-%dT%H:%M:%S.%f'),
+                    'sdk_version': self._sdk_version,
+                    'firmware_version': self._camera_firmware_version,
+                    'temperature': self._temperature,
+                    'target_temperature': self._target_temperature,
+                    'temperature_locked': self._temperature_locked,
+                    'pressure': self._pressure,
+                    'humidity': self._humidity,
+                    'win_x': 1,
+                    'win_width': self._readout_width,
+                    'win_y': 1,
+                    'win_height': self._readout_height,
+                    'image_x1': self._geometry_image_x1,
+                    'image_x2': self._geometry_image_x2,
+                    'image_y1': self._geometry_image_y1,
+                    'image_y2': self._geometry_image_y2,
+                    'exposure_count': self._exposure_count,
+                    'exposure_count_reference': self._exposure_count_reference
+                })
+
                 self._exposure_count += 1
 
                 # Save updated counts to disk
