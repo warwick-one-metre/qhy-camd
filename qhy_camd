@@ -540,10 +540,11 @@ class CameraDaemon:
                 self._readout_height = image_height.value
 
                 # Set default temperature
-                status = driver.SetQHYCCDParam(handle, QHYControl.COOLER, c_double(self._target_temperature))
-                if status != QHYStatus.Success:
-                    print('failed to set default target temperature with status {}'.format(status))
-                    return CommandStatus.Failed
+                if self._target_temperature is not None:
+                    status = driver.SetQHYCCDParam(handle, QHYControl.COOLER, c_double(self._target_temperature))
+                    if status != QHYStatus.Success:
+                        print('failed to set target temperature with status {}'.format(status))
+                        return CommandStatus.Failed
 
                 # Set gain and offset (bias)
                 status = driver.SetQHYCCDParam(handle, QHYControl.GAIN, c_double(self._config.gain))
