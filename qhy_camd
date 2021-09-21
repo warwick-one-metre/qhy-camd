@@ -61,8 +61,6 @@ class QHYControl:
     MANUALPWM = 16
     COOLER = 18
     GPS = 36
-    HUMIDITY = 62
-    PRESSURE = 63
 
 
 class GPSData(Structure):
@@ -175,8 +173,6 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id,
             ('SET-TEMP', frame['target_temperature'], '[deg c] CMOS temperature set point'),
             ('TEMP-LCK', frame['temperature_locked'],
              'CMOS temperature is locked to set point'),
-            ('CAM-PRES', round(frame['pressure'], 2), '[mbar] CMOS pressure sensor at end of exposure'),
-            ('CAM-HUMD', round(frame['humidity'], 2), '[%RH] CMOS humidity sensor at end of exposure'),
             ('CAM-XBIN', 1, '[px] x binning'),
             ('CAM-YBIN', 1, '[px] y binning'),
             ('CAM-WIND', '[{}:{},{}:{}]'.format(
@@ -289,8 +285,6 @@ class CameraDaemon:
         self._target_temperature = config.temperature_setpoint
         self._cooler_power = 0
         self._cooler_enabled = True
-        self._pressure = 0
-        self._humidity = 0
 
         self._exposure_time = 1
 
@@ -358,8 +352,6 @@ class CameraDaemon:
                     # Query temperature status
                     self._temperature = self._driver.GetQHYCCDParam(self._handle, QHYControl.CURTEMP)
                     self._cooler_power = round(self._driver.GetQHYCCDParam(self._handle, QHYControl.CURPWM) / 2.55)
-                    self._pressure = self._driver.GetQHYCCDParam(self._handle, QHYControl.PRESSURE)
-                    self._humidity = self._driver.GetQHYCCDParam(self._handle, QHYControl.HUMIDITY)
 
                     if self._cooler_enabled:
                         self._target_temperature = self._driver.GetQHYCCDParam(self._handle, QHYControl.COOLER)
@@ -453,8 +445,6 @@ class CameraDaemon:
                     'temperature': self._temperature,
                     'target_temperature': self._target_temperature,
                     'temperature_locked': self._temperature_locked,
-                    'pressure': self._pressure,
-                    'humidity': self._humidity,
                     'win_x': 1,
                     'win_width': self._readout_width,
                     'win_y': 1,
@@ -534,8 +524,6 @@ class CameraDaemon:
                 'target_temperature': self._target_temperature,
                 'cooler_enabled': self._cooler_enabled,
                 'cooler_power': self._cooler_power,
-                'pressure': self._pressure,
-                'humidity': self._humidity,
                 'exposure_time': self._exposure_time,
                 'exposure_progress': exposure_progress,
                 'sequence_frame_limit': self._sequence_frame_limit,
