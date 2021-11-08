@@ -336,7 +336,6 @@ class CameraDaemon:
         self._log_acquisition_status = True
 
         self._exposure_delay_condition = threading.Condition()
-        self._processing_queue = queue.Queue(maxsize=1)
 
         # Thread for polling camera status
         status_thread = threading.Thread(target=self.__poll_camera_status)
@@ -344,7 +343,7 @@ class CameraDaemon:
         status_thread.start()
 
         # Subprocess for processing acquired frames
-        self._processing_queue = Queue(maxsize=1)
+        self._processing_queue = Queue()
         self._processing_stop_signal = Value(c_bool, False)
 
         processing_process = Process(target=process_frames, args=(
