@@ -414,18 +414,14 @@ class CameraDaemon:
                     log.error(self._config.log_name, 'Failed to set exposure time (' + str(status) + ')')
                     return
 
+            status = self._driver.BeginQHYCCDLive(self._handle)
+            if status != QHYStatus.Success:
+                log.error(self._config.log_name, 'Failed to start exposures (' + str(status) + ')')
+                return
+
             while not self._stop_acquisition and not self._processing_stop_signal.value:
-                with self._driver_lock:
-                    start_time = Time.now()
-                    status = self._driver.ExpQHYCCDSingleFrame(self._handle)
-                    if status == QHYStatus.Error:
-                        log.error(self._config.log_name, 'Failed to start exposure sequence (' + str(status) + ')')
-                        break
-
+                start_time = Time.now()
                 self._sequence_exposure_start_time = start_time
-
-                if status != QHYStatus.ReadDirectly:
-                    time.sleep(1)
 
                 pixel_count = self._readout_width * self._readout_height
                 framedata = bytearray(pixel_count * 2)
@@ -436,14 +432,13 @@ class CameraDaemon:
                 channels = c_uint32(1)
                 cdata = (c_uint16 * pixel_count).from_buffer(framedata)
 
-                status = self._driver.GetQHYCCDSingleFrame(
-                    self._handle, byref(width), byref(height), byref(bpp), byref(channels), cdata)
-
-                if status != QHYStatus.Success:
-                    log.error(self._config.log_name, 'Failed to download frame (' + str(status) + ')')
-                    break
+                status = QHYStatus.Error
+                while status != QHYStatus.Success:
+                    status = self._driver.GetQHYCCDLiveFrame(
+                        self._handle, byref(width), byref(height), byref(bpp), byref(channels), cdata)
 
                 read_end_time = Time.now()
+                start_time = read_end_time - self._exposure_time * u.s
 
                 self._processing_queue.put({
                     'data': np.frombuffer(framedata, dtype=np.uint16).reshape((height.value, width.value)),
@@ -469,6 +464,7 @@ class CameraDaemon:
 
                 self._exposure_count += 1
 
+                actualexposuretime = c_uint32()
                 # Save updated counts to disk
                 with open(self._counter_filename, 'w') as outfile:
                     json.dump({
@@ -482,6 +478,7 @@ class CameraDaemon:
                 if 0 < self._sequence_frame_limit <= self._sequence_frame_count:
                     self._stop_acquisition = True
         finally:
+            self._driver.StopQHYCCDLive(self._handle)
             print('exposure sequence: complete')
             if self._log_acquisition_status:
                 log.info(self._config.log_name, 'Exposure sequence complete')
@@ -604,7 +601,7 @@ class CameraDaemon:
                     print('failed to query firmware version with status {}'.format(status))
                     return CommandStatus.Failed
 
-                status = driver.SetQHYCCDStreamMode(handle, 0)
+                status = driver.SetQHYCCDStreamMode(handle, 1)
                 if status != QHYStatus.Success:
                     print('failed to set single frame mode with status {}'.format(status))
                     return CommandStatus.Failed
