@@ -741,7 +741,7 @@ class CameraDaemon:
                 return CommandStatus.CameraNotIdle
 
             # Reset cooling
-            temperature = params.get('temperature', self._config['temperature'])
+            temperature = params.get('temperature', self._config.temperature_setpoint)
             if not self.__set_target_temperature(temperature):
                 return CommandStatus.Failed
 
@@ -749,7 +749,7 @@ class CameraDaemon:
                 log.info(self._config.log_name, 'Target temperature set to ' + str(temperature))
 
             # Reset exposure time
-            self._exposure_time = params.get('exposure', self._config['exposure'])
+            self._exposure_time = params.get('exposure', 1)
 
             if not quiet:
                 log.info(self._config.log_name, 'Exposure time set to {:.3f}s'.format(self._exposure_time))
