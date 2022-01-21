@@ -120,6 +120,26 @@ def set_exposure(config, camera_ids, args):
     return -1
 
 
+def set_gain(config, camera_ids, args):
+    """Set the camera exposure time"""
+    if len(args) == 1:
+        gain = int(args[0])
+        with config.daemon.connect() as camd:
+            return camd.set_gain(gain)
+    print('usage: {} [{}] gain <value>'.format(SCRIPT_NAME, '|'.join(camera_ids)))
+    return -1
+
+
+def set_offset(config, camera_ids, args):
+    """Set the camera exposure time"""
+    if len(args) == 1:
+        offset = int(args[0])
+        with config.daemon.connect() as camd:
+            return camd.set_offset(offset)
+    print('usage: {} [{}] offset <value>'.format(SCRIPT_NAME, '|'.join(camera_ids)))
+    return -1
+
+
 def start(config, camera_ids, args):
     """Starts an exposure sequence"""
     if len(args) == 1:
@@ -195,6 +215,8 @@ if __name__ == '__main__':
     commands = {
         'temperature': set_temperature,
         'exposure': set_exposure,
+        'gain': set_gain,
+        'offset': set_offset,
         'status': status,
         'start': start,
         'stop': stop,

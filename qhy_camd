@@ -128,9 +128,8 @@ class GPSData(Structure):
     def PPSDelta(self):
         return int.from_bytes(self._PPSDelta, byteorder='big', signed=False)
 
-def process_frames(process_queue, stop_signal, camera_id, camera_device_id,
-                   camera_gain, camera_offset, use_gpsbox, output_path,
-                   log_name, pipeline_daemon_name, pipeline_handover_timeout):
+def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_gpsbox,
+                   output_path, log_name, pipeline_daemon_name, pipeline_handover_timeout):
     """
     Helper process to save frames to disk.
     This uses a process (rather than a thread) to avoid the GIL stalling frame acquisition
@@ -202,8 +201,8 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id,
             ('FWVER', frame['firmware_version'], 'camera firmware version'),
             ('CAMID', camera_id, 'camera identifier'),
             ('CAMERA', camera_device_id, 'camera model and serial number'),
-            ('CAM-GAIN', camera_gain, 'cmos gain setting'),
-            ('CAM-OFST', camera_offset, 'cmos offset setting'),
+            ('CAM-GAIN', frame['gain'], 'cmos gain setting'),
+            ('CAM-OFST', frame['offset'], 'cmos offset setting'),
             ('CAM-TEMP', round(frame['temperature'], 2),
              '[deg c] cmos temperature at end of exposure'),
             ('SET-TEMP', frame['target_temperature'], '[deg c] cmos temperature set point'),
@@ -305,6 +304,8 @@ class CameraDaemon:
         self._cooler_enabled = True
 
         self._exposure_time = 1
+        self._gain = config.gain
+        self._offset = config.offset
 
         # Limit and number of frames acquired during the next sequence
         # Set to 0 to run continuously
@@ -355,7 +356,7 @@ class CameraDaemon:
 
         processing_process = Process(target=process_frames, args=(
             self._processing_queue, self._processing_stop_signal, config.camera_id, config.camera_device_id,
-            config.gain, config.offset, config.use_gpsbox, config.output_path, config.log_name,
+            config.use_gpsbox, config.output_path, config.log_name,
             config.pipeline_daemon_name, config.pipeline_handover_timeout))
         processing_process.daemon = True
         processing_process.start()
@@ -448,6 +449,8 @@ class CameraDaemon:
                 self._processing_queue.put({
                     'data': np.frombuffer(framedata, dtype=np.uint16).reshape((height.value, width.value)),
                     'exposure': self._exposure_time,
+                    'gain': self._gain,
+                    'offset': self._offset,
                     'read_end_time': read_end_time,
                     'sdk_version': self._sdk_version,
                     'firmware_version': self._camera_firmware_version,
@@ -776,6 +779,60 @@ class CameraDaemon:
 
             if not quiet:
                 log.info(self._config.log_name, 'Exposure time set to {:.3f}s'.format(seconds))
+            return CommandStatus.Succeeded
+
+    @Pyro4.expose
+    def set_gain(self, gain, quiet=False):
+        """Set the sensor gain value"""
+        if not pyro_client_matches(self._config.control_ips):
+            return CommandStatus.InvalidControlIP
+
+        with TryLock(self._command_lock) as success:
+            if not success:
+                return CommandStatus.Blocked
+
+            if self._status == CameraStatus.Disabled:
+                return CommandStatus.CameraNotInitialized
+
+            if self._status != CameraStatus.Idle:
+                return CommandStatus.CameraNotIdle
+
+            status = self._driver.SetQHYCCDParam(self._handle, QHYControl.GAIN, c_double(gain))
+            if status != QHYStatus.Success:
+                print('failed to set gain with status {}'.format(status))
+                return CommandStatus.Failed
+
+            self._gain = gain
+
+            if not quiet:
+                log.info(self._config.log_name, 'Gain set to {}'.format(gain))
+            return CommandStatus.Succeeded
+
+    @Pyro4.expose
+    def set_offset(self, offset, quiet=False):
+        """Set the sensor bias offset"""
+        if not pyro_client_matches(self._config.control_ips):
+            return CommandStatus.InvalidControlIP
+
+        with TryLock(self._command_lock) as success:
+            if not success:
+                return CommandStatus.Blocked
+
+            if self._status == CameraStatus.Disabled:
+                return CommandStatus.CameraNotInitialized
+
+            if self._status != CameraStatus.Idle:
+                return CommandStatus.CameraNotIdle
+
+            status = self._driver.SetQHYCCDParam(self._handle, QHYControl.OFFSET, c_double(offset))
+            if status != QHYStatus.Success:
+                print('failed to set offset with status {}'.format(status))
+                return CommandStatus.Failed
+
+            self._offset = offset
+
+            if not quiet:
+                log.info(self._config.log_name, 'Offset set to {}'.format(offset))
             return CommandStatus.Succeeded
 
     @Pyro4.expose
