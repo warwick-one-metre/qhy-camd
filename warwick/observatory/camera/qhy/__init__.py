@@ -17,5 +17,5 @@
 """qhy-camd common code"""
 
 from .config import Config
-from .constants import CommandStatus, CameraStatus
+from .constants import CommandStatus, CameraStatus, CoolerMode
 from .validation import configure_validation_schema

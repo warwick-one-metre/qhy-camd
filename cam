@@ -22,7 +22,7 @@ import os
 import sys
 import Pyro4
 from warwick.observatory.common import TFmt
-from warwick.observatory.camera.qhy import CommandStatus, CameraStatus, Config
+from warwick.observatory.camera.qhy import CommandStatus, CameraStatus, CoolerMode, Config
 
 SCRIPT_NAME = os.path.basename(sys.argv[0])
 sys.excepthook = Pyro4.util.excepthook
@@ -55,7 +55,7 @@ def status(config, *_):
     with config.daemon.connect() as camd:
         data = camd.report_status()
 
-    state_desc = CameraStatus.label(data['state'])
+    state_desc = CameraStatus.label(data['state'], True)
     if data['state'] == CameraStatus.Acquiring:
         progress = '{:.1f} / {:.1f}s'.format(data['exposure_progress'], data['exposure_time'])
         state_desc += ' (' + TFmt.Bold + progress + TFmt.Clear + ')'
@@ -70,29 +70,14 @@ def status(config, *_):
             else:
                 print('   Acquiring ' + TFmt.Bold + 'UNTIL STOPPED' + TFmt.Clear)
 
-        temperature_fmt = TFmt.Bold + TFmt.Red
-        if data['temperature_locked']:
-            temperature_status = ' (' + TFmt.Bold + TFmt.Green + 'LOCKED' + TFmt.Clear + ')'
-            temperature_fmt = TFmt.Bold + TFmt.Green
-        elif data['target_temperature'] is not None:
-            temperature_status = ' (' + TFmt.Bold + 'LOCKING ON {:.0f}\u00B0C'.format(
-                data['target_temperature']) + TFmt.Clear + ')'
-        else:
-            temperature_status = ''
+        print('   Temperature is ' + TFmt.Bold + '{:.0f}\u00B0C'.format(data['cooler_temperature']) + TFmt.Clear +
+              ' (' + TFmt.Bold + '{:.0f}'.format(data['cooler_pwm']) + TFmt.Clear + '% power, ' +
+              CoolerMode.label(data['cooler_mode'], True) + ')')
 
-        print('   Temperature is ' + temperature_fmt + '{:.0f}'.format(data['temperature']) + \
-              '\u00B0C' + TFmt.Clear + temperature_status)
+        if data['cooler_setpoint'] is not None:
+            print('   Temperature set point is ' + TFmt.Bold + '{:.0f}\u00B0C'.format(data['cooler_setpoint']) + TFmt.Clear)
 
-        cooler_fmt = TFmt.Bold
-        if data['cooler_enabled']:
-            cooler_fmt += 'ENABLED ({}% power)'.format(data['cooler_power'])
-        else:
-            cooler_fmt += TFmt.Red + 'DISABLED'
-
-        print('   Cooler is ' + cooler_fmt + TFmt.Clear)
-        exposure_label = TFmt.Bold + '{:.3f} s'.format(data['exposure_time']) + TFmt.Clear
-
-        print('   Exposure time is ' + exposure_label)
+        print('   Exposure time is ' + TFmt.Bold + '{:.3f} s'.format(data['exposure_time']) + TFmt.Clear)
 
     return 0
 

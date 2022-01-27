@@ -24,8 +24,8 @@ CONFIG_SCHEMA = {
     'additionalProperties': False,
     'required': [
         'daemon', 'pipeline_daemon', 'pipeline_handover_timeout', 'log_name', 'control_machines', 'camera_device_id',
-        'camera_id', 'temperature_setpoint', 'temperature_query_delay', 'gain', 'offset', 'use_gpsbox',
-        'output_path', 'output_prefix', 'expcount_path'
+        'camera_id', 'cooler_setpoint', 'cooler_update_delay', 'cooler_pwm_step', 'gain', 'offset',
+        'use_gpsbox', 'output_path', 'output_prefix', 'expcount_path'
     ],
     'properties': {
         'daemon': {
@@ -53,14 +53,18 @@ CONFIG_SCHEMA = {
         'camera_device_id': {
             'type': 'string'
         },
-        'temperature_setpoint': {
+        'cooler_setpoint': {
             'type': 'number',
             'min': -20,
             'max': 30,
         },
-        'temperature_query_delay': {
+        'cooler_update_delay': {
             'type': 'number',
             'min': 0
+        },
+        'cooler_pwm_step': {
+            'type': 'integer',
+            'min': 1
         },
         'gain': {
             'type': 'integer',
@@ -118,5 +122,6 @@ class Config:
         self.gain = config_json['gain']
         self.offset = config_json['offset']
         self.use_gpsbox = config_json['use_gpsbox']
-        self.temperature_setpoint = config_json['temperature_setpoint']
-        self.temperature_query_delay = config_json['temperature_query_delay']
+        self.cooler_setpoint = config_json['cooler_setpoint']
+        self.cooler_update_delay = config_json['cooler_update_delay']
+        self.cooler_pwm_step = config_json['cooler_pwm_step']
