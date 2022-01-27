@@ -8,7 +8,7 @@
   "temperature_setpoint": -5,
   "temperature_query_delay": 5,
   "gain": 26,
-  "offset": 140,
+  "offset": 30,
   "use_gpsbox": true,
   "camera_id": "CAM1",
   "output_path": "/var/tmp/",
