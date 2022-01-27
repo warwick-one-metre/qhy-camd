@@ -444,6 +444,12 @@ class CameraDaemon:
                     status = self._driver.GetQHYCCDLiveFrame(
                         self._handle, byref(width), byref(height), byref(bpp), byref(channels), cdata)
 
+                    if self._stop_acquisition or self._processing_stop_signal.value:
+                        break
+
+                if self._stop_acquisition or self._processing_stop_signal.value:
+                    break
+
                 read_end_time = Time.now()
 
                 self._processing_queue.put({
