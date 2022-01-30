@@ -62,6 +62,7 @@ class QHYControl:
     MANUALPWM = 16
     COOLER = 18
     GPS = 36
+    DDR = 48
 
 
 class GPSData(Structure):
@@ -426,6 +427,8 @@ class CameraDaemon:
                     log.error(self._config.log_name, 'Failed to set exposure time (' + str(status) + ')')
                     return
 
+            # self._driver.PCIEClearDDR(self._handle)
+
             status = self._driver.BeginQHYCCDLive(self._handle)
             if status != QHYStatus.Success:
                 log.error(self._config.log_name, 'Failed to start exposures (' + str(status) + ')')
@@ -453,6 +456,39 @@ class CameraDaemon:
 
                 if self._stop_acquisition or self._processing_stop_signal.value:
                     break
+
+                PixelPeriod_ps = c_uint32()
+                LinePeriod_ns = c_uint32()
+                FramePeriod_us = c_uint32()
+                ClocksPerLine = c_uint32()
+                LinesPerFrame = c_uint32()
+                ActualExposureTime = c_uint32()
+                isLongExposureMode = c_uint8()
+
+                status = self._driver.GetQHYCCDPreciseExposureInfo(self._handle,
+                                             byref(PixelPeriod_ps),
+                                             byref(LinePeriod_ns),
+                                             byref(FramePeriod_us),
+                                             byref(ClocksPerLine),
+                                             byref(LinesPerFrame),
+                                             byref(ActualExposureTime),
+                                             byref(isLongExposureMode))
+
+                print('status', status)
+                print('PixelPeriod_ps', PixelPeriod_ps.value)
+                print('LinePeriod_ns', LinePeriod_ns.value)
+                print('FramePeriod_us', FramePeriod_us.value)
+                print('ClocksPerLine', ClocksPerLine.value)
+                print('LinesPerFrame', LinesPerFrame.value)
+                print('ActualExposureTime', ActualExposureTime.value)
+                print('isLongExposureMode', isLongExposureMode.value)
+
+                row = c_uint32(0)
+                offset = c_double()
+
+                status = self._driver.GetQHYCCDRollingShutterEndOffset(self._handle, row, byref(offset))
+                print('shutter status', status)
+                print('offset', offset.value)
 
                 read_end_time = Time.now()
 
@@ -673,6 +709,11 @@ class CameraDaemon:
                     print('failed to set usbtraffic with status {}'.format(status))
                     return CommandStatus.Failed
 
+                status = driver.SetQHYCCDParam(handle, QHYControl.DDR, c_double(1))
+                if status != QHYStatus.Success:
+                    print('failed to set ddr with status {}'.format(status))
+                    return CommandStatus.Failed
+
                 status = driver.SetQHYCCDResolution(handle, 0, 0, image_width, image_height)
                 if status != QHYStatus.Success:
                     print('failed to set readout region with status {}'.format(status))
@@ -840,6 +881,37 @@ class CameraDaemon:
                 log.info(self._config.log_name, 'Offset set to {}'.format(offset))
             return CommandStatus.Succeeded
 
+    @Pyro4.expose
+    def set_led(self, mode, offset, width):
+        """Configure the calibration LED"""
+        if not pyro_client_matches(self._config.control_ips):
+            return CommandStatus.InvalidControlIP
+
+        with TryLock(self._command_lock) as success:
+            if not success:
+                return CommandStatus.Blocked
+
+            if self._status == CameraStatus.Disabled:
+                return CommandStatus.CameraNotInitialized
+
+            if self._status != CameraStatus.Idle:
+                return CommandStatus.CameraNotIdle
+
+            mode = c_uint8(mode)
+            offset = c_uint32(offset)
+            width = c_uint8(width)
+            status = self._driver.SetQHYCCDGPSLedCalMode(self._handle, mode)
+            if status != QHYStatus.Success:
+                print('failed to set led cal mode with status {}'.format(status))
+                return CommandStatus.Failed
+
+            if mode.value != 0:
+                status = self._driver.SetQHYCCDGPSLedCal(self._handle, offset, width);
+                if status != QHYStatus.Success:
+                    print('failed to set led cal with status {}'.format(status))
+                    return CommandStatus.Failed
+
+            return CommandStatus.Succeeded
     @Pyro4.expose
     def shutdown(self):
         """Disconnects from the camera driver"""

@@ -124,6 +124,16 @@ def set_offset(config, camera_ids, args):
     print('usage: {} [{}] offset <value>'.format(SCRIPT_NAME, '|'.join(camera_ids)))
     return -1
 
+def set_led(config, camera_ids, args):
+    """Set the camera calihbration LED"""
+    if len(args) == 3:
+        mode = int(args[0])
+        offset = int(args[1])
+        width = int(args[2])
+        with config.daemon.connect() as camd:
+            return camd.set_led(mode, offset, width)
+    print('usage: {} [{}] led <mode> <offset> <width>'.format(SCRIPT_NAME, '|'.join(camera_ids)))
+    return -1
 
 def start(config, camera_ids, args):
     """Starts an exposure sequence"""
@@ -202,6 +212,7 @@ if __name__ == '__main__':
         'exposure': set_exposure,
         'gain': set_gain,
         'offset': set_offset,
+        'led': set_led,
         'status': status,
         'start': start,
         'stop': stop,
