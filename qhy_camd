@@ -759,6 +759,8 @@ class CameraDaemon:
            params should be a dictionary with the following keys:
               temperature: Temperature set point
               exposure: Exposure time in seconds
+              gain: Gain setting
+              offset: Offset (bias) setting
            Any properties not specified in params will be reset to its default
 
            The params dictionary should be validated using the
@@ -790,6 +792,21 @@ class CameraDaemon:
 
             if not quiet:
                 log.info(self._config.log_name, 'Exposure time set to {:.3f}s'.format(self._exposure_time))
+
+            self._gain = params.get('gain', self._config.gain)
+            status = self._driver.SetQHYCCDParam(self._handle, QHYControl.GAIN, c_double(self._gain))
+            if status != QHYStatus.Success:
+                print('failed to set gain with status {}'.format(status))
+                return CommandStatus.Failed
+
+            self._offset = params.get('offset', self._config.offset)
+            status = self._driver.SetQHYCCDParam(self._handle, QHYControl.OFFSET, c_double(self._offset))
+            if status != QHYStatus.Success:
+                print('failed to set offset with status {}'.format(status))
+                return CommandStatus.Failed
+
+            if not quiet:
+                log.info(self._config.log_name, 'Offset set to {}'.format(self._offset))
 
             return CommandStatus.Succeeded
 
