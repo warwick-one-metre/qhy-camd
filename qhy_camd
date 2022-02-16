@@ -548,6 +548,7 @@ class CameraDaemon:
                 'cooler_temperature': self._cooler_temperature,
                 'cooler_pwm': round(self._cooler_pwm / 2.55),  # byte to percentage
                 'cooler_setpoint': self._cooler_setpoint,
+                'temperature_locked': self._cooler_mode == CoolerMode.Locked, # used by opsd
                 'exposure_time': self._exposure_time,
                 'exposure_progress': exposure_progress,
                 'sequence_frame_limit': self._sequence_frame_limit,
