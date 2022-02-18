@@ -127,6 +127,7 @@ class GPSData(Structure):
     def PPSDelta(self):
         return int.from_bytes(self._PPSDelta, byteorder='big', signed=False)
 
+
 def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_gpsbox,
                    output_path, log_name, pipeline_daemon_name, pipeline_handover_timeout):
     """
@@ -137,41 +138,42 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
     while True:
         frame = process_queue.get()
 
-        # Parse timestamps out of the first row of pixel data
-        # The GPS box and data protocol seem have been designed for a global shutter camera,
-        # so the start/end/now timestamps here actually record the rising and falling edge
-        # of the 0.4us long VSYNC signal and the start/end values are meaningless.
-        # According to the QHY precision timing documentation, the actual exposure end for
-        # row 0 happens ~46 HSYNC pulses later for USB_TRAFFIC=0:
-        #   T (end exposure, line1&2) = GPS position + 46 * LinePeriod + 21.52us.
-        # where LinePeriod is 39.04us (TODO: confirm this using an oscilloscope).
-        lineperiod = 39.04
-
+        # Estimate frame end time based on when we finished reading out
+        # line period is given in nanoseconds
         # TODO: Calibrate from GPS box offsets
-        readout_offset = lineperiod * 6422 / 1e6
-        start_offset = readout_offset + frame['exposure']
-        end_time = (frame['read_end_time'] - readout_offset * u.s).strftime('%Y-%m-%dT%H:%M:%S.%f')
-        start_time = (frame['read_end_time'] - start_offset * u.s).strftime('%Y-%m-%dT%H:%M:%S.%f')
+        # HACK: on SDK version 22.02.17 frames over USB appear to be delayed by an extra frame period
+        # TODO: Test if this is true for PCIE
+        end_offset = -frame['lineperiod'] * 6422 / 1e9 - frame['frameperiod']
+        start_offset = end_offset - frame['exposure']
+        end_time = (frame['read_end_time'] + end_offset * u.s).strftime('%Y-%m-%dT%H:%M:%S.%f')
+        start_time = (frame['read_end_time'] + start_offset * u.s).strftime('%Y-%m-%dT%H:%M:%S.%f')
         date_header = [
             ('DATE-OBS', start_time, '[utc] estimated row 0 exposure start time'),
             ('DATE-END', end_time, '[utc] estimated row 0 exposure end time'),
-            ('TIME-SRC', 'NTP', 'DATE-OBS is estimated from NTP-synced PC clock at end of readout'),
+            ('TIME-SRC', 'NTP', 'DATE-OBS is estimated from NTP-synced PC clock'),
         ]
         gps_header = []
 
         if use_gpsbox:
+            # Parse timestamps out of the first row of pixel data
+            # The GPS box and data protocol seem have been designed for a global shutter camera,
+            # so the start/end/now timestamps here actually record the rising and falling edge
+            # of the 0.4us long VSYNC signal and the start/end values are meaningless.
+            # SDK versions >= 22.02.17 add precision timing APIs to calculate the relative offsets
+            # to the first image row.
+
             gps = GPSData.from_address(frame['data'].ctypes.data)
             vsync_timestamp = GPSData.create_timestamp(gps.NowSeconds, gps.NowCounts)
             vsync_status = GPSData.create_status(gps.NowFlag)
 
             if vsync_status == 'LOCKED':
-                readout_offset = (46 * lineperiod + 21.52) / 1e6
-                start_time = GPSData.create_timestamp(gps.NowSeconds - frame['exposure'] + readout_offset, gps.NowCounts)
-                end_time = GPSData.create_timestamp(gps.NowSeconds + readout_offset, gps.NowCounts)
+                end_seconds = gps.NowSeconds + frame['readout_offset'] / 1e6
+                start_time = GPSData.create_timestamp(end_seconds - frame['exposure'], gps.NowCounts)
+                end_time = GPSData.create_timestamp(end_seconds, gps.NowCounts)
                 date_header = [
                     ('DATE-OBS', start_time, '[utc] row 0 exposure start time'),
                     ('DATE-END', end_time, '[utc] row 0 exposure end time'),
-                    ('TIME-SRC', 'GPS', 'DATE-OBS is a NTP-synced PC clock timestamp'),
+                    ('TIME-SRC', 'GPS', 'DATE-OBS is from a GPS measured HSYNC signal'),
                 ]
 
             gps_header = [
@@ -189,8 +191,10 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
             (None, None, None),
             ('COMMENT', ' ---                DATE/TIME                --- ', ''),
         ] + date_header + [
-            ('ROWDELTA', lineperiod, '[us] rolling shutter row period'),
-            ('EXPTIME', round(frame['exposure'], 3), '[s] exposure length'),
+            ('EXPTIME', round(frame['exposure'], 3), '[s] actual exposure length'),
+            ('EXPRQSTD', round(frame['requested_exposure'], 3), '[s] requested exposure length'),
+            ('EXPCADNC', round(frame['frameperiod'], 3), '[s] exposure cadence'),
+            ('ROWDELTA', round(frame['lineperiod'] * 1e6, 3), '[us] rolling shutter row period'),
             ('PC-RDEND', frame['read_end_time'].strftime('%Y-%m-%dT%H:%M:%S.%f'),
              '[utc] local PC time when readout completed'),
             (None, None, None),
@@ -454,11 +458,48 @@ class CameraDaemon:
                 if self._stop_acquisition or self._processing_stop_signal.value:
                     break
 
+                pixel_period_ps = c_uint32()
+                line_period_ns = c_uint32()
+                frame_period_us = c_uint32()
+                clocks_per_line = c_uint32()
+                lines_per_frame = c_uint32()
+                actual_exposure_us = c_uint32()
+                is_long_exposure = c_uint8()
+
+                status = self._driver.GetQHYCCDPreciseExposureInfo(self._handle,
+                                             byref(pixel_period_ps),
+                                             byref(line_period_ns),
+                                             byref(frame_period_us),
+                                             byref(clocks_per_line),
+                                             byref(lines_per_frame),
+                                             byref(actual_exposure_us),
+                                             byref(is_long_exposure))
+
+                print('status', status)
+                print('PixelPeriod_ps', pixel_period_ps.value)
+                print('LinePeriod_ns', line_period_ns.value)
+                print('FramePeriod_us', frame_period_us.value)
+                print('ClocksPerLine', clocks_per_line.value)
+                print('LinesPerFrame', lines_per_frame.value)
+                print('ActualExposureTime', actual_exposure_us.value)
+                print('isLongExposureMode', is_long_exposure.value)
+
+                row = c_uint32(0)
+                readout_offset_us = c_double()
+
+                status = self._driver.GetQHYCCDRollingShutterEndOffset(self._handle, row, byref(readout_offset_us))
+                print('shutter status', status)
+                print('offset', readout_offset_us.value)
+
                 read_end_time = Time.now()
 
                 self._processing_queue.put({
                     'data': np.frombuffer(framedata, dtype=np.uint16).reshape((height.value, width.value)),
-                    'exposure': self._exposure_time,
+                    'requested_exposure': float(self._exposure_time),
+                    'exposure': actual_exposure_us.value / 1e6,
+                    'lineperiod': line_period_ns.value / 1e9,
+                    'frameperiod': frame_period_us.value / 1e6,
+                    'readout_offset': readout_offset_us.value,
                     'gain': self._gain,
                     'offset': self._offset,
                     'read_end_time': read_end_time,
