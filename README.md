@@ -20,8 +20,10 @@ The configuration options are:
   "log_name": "qhy_camd@test", # The name to use when writing messages to the observatory log.
   "control_machines": ["LocalHost"], # Machine names that are allowed to control (rather than just query) state. Machine names are registered in `warwick.observatory.common.IP`.
   "camera_device_id": "QHY600M-2c52f645aa1c25b98", # Identifier reported by the SDK for the desired camera. If not known, set a dummy value and look at the list reported when camd attempts to connect.
-  "temperature_setpoint": -5, # Default temperature for the CMOS sensor.
-  "temperature_query_delay": 1, # Amount of time in seconds to wait between querying the camera temperature and cooling status
+  "cooler_setpoint": -5, # Default temperature for the CMOS sensor.
+  "cooler_update_delay": 1, # Amount of time in seconds to wait between querying the camera temperature and cooling status.
+  "cooler_pwm_step": 3, # PWM units to change per update delay when cooling/warming (3 = ~1%).
+  "mode": 0, # Camera read mode: 0 (photographic), 1 (high gain), 4 (14 bit readout).
   "gain": 26, # Gain setting for the CMOS sensor. See the QHY600 spec sheet for details on the implications on signal and read noise.
   "offset": 140, # Bias setting for the CMOS sensor.
   "use_gpsbox": true, # Use attached GPS Box to measure exposure timestamps.

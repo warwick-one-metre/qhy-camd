@@ -204,6 +204,7 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
             ('FWVER', frame['firmware_version'], 'camera firmware version'),
             ('CAMID', camera_id, 'camera identifier'),
             ('CAMERA', camera_device_id, 'camera model and serial number'),
+            ('CAM-MODE', frame['mode'], 'cmos read mode ({})'.format(frame['mode_name'])),
             ('CAM-GAIN', frame['gain'], 'cmos gain setting'),
             ('CAM-OFST', frame['offset'], 'cmos offset setting'),
             ('CAM-TEMP', round(frame['cooler_temperature'], 2),
@@ -310,6 +311,7 @@ class CameraDaemon:
         self._exposure_time = 1
         self._gain = config.gain
         self._offset = config.offset
+        self._mode_name = 'unknown'
 
         # Limit and number of frames acquired during the next sequence
         # Set to 0 to run continuously
@@ -487,6 +489,8 @@ class CameraDaemon:
                     'lineperiod': line_period_ns.value / 1e9,
                     'frameperiod': frame_period_us.value / 1e6,
                     'readout_offset': readout_offset_us.value,
+                    'mode': self._config.mode,
+                    'mode_name': self._mode_name,
                     'gain': self._gain,
                     'offset': self._offset,
                     'read_end_time': read_end_time,
@@ -646,6 +650,19 @@ class CameraDaemon:
                 else:
                     print('failed to query firmware version with status {}'.format(status))
                     return CommandStatus.Failed
+
+                status = driver.SetQHYCCDReadMode(handle, c_uint32(self._config.mode))
+                if status != QHYStatus.Success:
+                    print('failed to set read mode with status {}'.format(status))
+                    return CommandStatus.Failed
+
+                mode_name = create_string_buffer(128)
+                status = driver.GetQHYCCDReadModeName(handle, c_uint32(self._config.mode), mode_name)
+                if status != QHYStatus.Success:
+                    print('failed to query read mode name with status {}'.format(status))
+                    return CommandStatus.Failed
+
+                self._mode_name = mode_name.value.decode('ascii')
 
                 status = driver.SetQHYCCDStreamMode(handle, 1)
                 if status != QHYStatus.Success:
