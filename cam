@@ -115,6 +115,16 @@ def set_gain(config, camera_ids, args):
     return -1
 
 
+def set_streaming(config, camera_ids, args):
+    """Set the camera streaming mode"""
+    if len(args) == 1 and (args[0] == 'enable' or args[0] == 'disable'):
+        enabled = args[0] == 'enable'
+        with config.daemon.connect() as camd:
+            return camd.set_frame_streaming(enabled)
+    print('usage: {} [{}] gain <value>'.format(SCRIPT_NAME, '|'.join(camera_ids)))
+    return -1
+
+
 def set_offset(config, camera_ids, args):
     """Set the camera exposure time"""
     if len(args) == 1:
@@ -202,6 +212,7 @@ if __name__ == '__main__':
         'exposure': set_exposure,
         'gain': set_gain,
         'offset': set_offset,
+        'stream': set_streaming,
         'status': status,
         'start': start,
         'stop': stop,
