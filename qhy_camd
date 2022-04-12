@@ -205,6 +205,7 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
             ('CAMID', camera_id, 'camera identifier'),
             ('CAMERA', camera_device_id, 'camera model and serial number'),
             ('CAM-MODE', frame['mode'], 'cmos read mode ({})'.format(frame['mode_name'])),
+            ('CAM-TFER', 'STREAM' if frame['stream'] else 'SINGLE', 'frame transfer mode'),
             ('CAM-GAIN', frame['gain'], 'cmos gain setting'),
             ('CAM-OFST', frame['offset'], 'cmos offset setting'),
             ('CAM-TEMP', round(frame['cooler_temperature'], 2),
@@ -295,6 +296,13 @@ class CameraDaemon:
 
         self._readout_width = 0
         self._readout_height = 0
+
+        # Streaming frames (aka Live Mode) enables overlapping readout, avoiding
+        # dead time between exposures. However, a bug in the QHY600 firmware / SDK
+        # >= 20220217 skips the first frame, adding a full exposure dead time at the
+        # start of the sequence. If we are only interested in one or two frames it
+        # is more efficient to disable streaming and take individual exposures.
+        self._stream_frames = True
 
         # Image geometry (marking edges of overscan etc)
         self._geometry_image_x1 = 0
@@ -432,13 +440,20 @@ class CameraDaemon:
                     log.error(self._config.log_name, 'Failed to set exposure time (' + str(status) + ')')
                     return
 
-            status = self._driver.BeginQHYCCDLive(self._handle)
-            if status != QHYStatus.Success:
-                log.error(self._config.log_name, 'Failed to start exposures (' + str(status) + ')')
-                return
+            if self._stream_frames:
+                status = self._driver.BeginQHYCCDLive(self._handle)
+                if status != QHYStatus.Success:
+                    log.error(self._config.log_name, 'Failed to start exposures (' + str(status) + ')')
+                    return
 
             while not self._stop_acquisition and not self._processing_stop_signal.value:
-                self._sequence_exposure_start_time = Time.now()
+                with self._driver_lock:
+                    self._sequence_exposure_start_time = Time.now()
+                    if not self._stream_frames:
+                        status = self._driver.ExpQHYCCDSingleFrame(self._handle)
+                        if status == QHYStatus.Error:
+                            log.error(self._config.log_name, 'Failed to start exposure sequence (' + str(status) + ')')
+                            break
 
                 pixel_count = self._readout_width * self._readout_height
                 framedata = bytearray(pixel_count * 2)
@@ -449,12 +464,20 @@ class CameraDaemon:
                 channels = c_uint32(1)
                 cdata = (c_uint16 * pixel_count).from_buffer(framedata)
 
-                status = QHYStatus.Error
-                while status != QHYStatus.Success:
-                    status = self._driver.GetQHYCCDLiveFrame(
+                if self._stream_frames:
+                    status = QHYStatus.Error
+                    while status != QHYStatus.Success:
+                        status = self._driver.GetQHYCCDLiveFrame(
+                            self._handle, byref(width), byref(height), byref(bpp), byref(channels), cdata)
+
+                        if self._stop_acquisition or self._processing_stop_signal.value:
+                            break
+                else:
+                    status = self._driver.GetQHYCCDSingleFrame(
                         self._handle, byref(width), byref(height), byref(bpp), byref(channels), cdata)
 
-                    if self._stop_acquisition or self._processing_stop_signal.value:
+                    if status != QHYStatus.Success:
+                        log.error(self._config.log_name, 'Failed to download frame (' + str(status) + ')')
                         break
 
                 if self._stop_acquisition or self._processing_stop_signal.value:
@@ -493,6 +516,7 @@ class CameraDaemon:
                     'mode_name': self._mode_name,
                     'gain': self._gain,
                     'offset': self._offset,
+                    'stream': self._stream_frames,
                     'read_end_time': read_end_time,
                     'sdk_version': self._sdk_version,
                     'firmware_version': self._camera_firmware_version,
@@ -513,6 +537,7 @@ class CameraDaemon:
                 })
 
                 self._exposure_count += 1
+                first_sequence_frame = False
 
                 # Save updated counts to disk
                 with open(self._counter_filename, 'w') as outfile:
@@ -527,7 +552,9 @@ class CameraDaemon:
                 if 0 < self._sequence_frame_limit <= self._sequence_frame_count:
                     self._stop_acquisition = True
         finally:
-            self._driver.StopQHYCCDLive(self._handle)
+            if self._stream_frames:
+                self._driver.StopQHYCCDLive(self._handle)
+
             print('exposure sequence: complete')
             if self._log_acquisition_status:
                 log.info(self._config.log_name, 'Exposure sequence complete')
@@ -588,6 +615,55 @@ class CameraDaemon:
             })
 
         return data
+
+    def __set_frame_streaming(self, streaming):
+        if self._stream_frames == streaming:
+            return
+
+        with self._driver_lock:
+            status = self._driver.SetQHYCCDStreamMode(self._handle, 1 if streaming else 0)
+            if status != QHYStatus.Success:
+                print('failed to set stream mode with status {}'.format(status))
+                return False
+
+            self._stream_frames = streaming
+
+            status = self._driver.InitQHYCCD(self._handle)
+            if status != QHYStatus.Success:
+                print('failed to initialize camera with status {}'.format(status))
+                return False
+
+            status = self._driver.SetQHYCCDResolution(self._handle, 0, 0, self._readout_width, self._readout_height)
+            if status != QHYStatus.Success:
+                print('failed to set readout region with status {}'.format(status))
+                return False
+
+            status = self._driver.SetQHYCCDBitsMode(self._handle, 16)
+            if status != QHYStatus.Success:
+                print('failed to set 16bit readout with status {}'.format(status))
+                return False
+
+    @Pyro4.expose
+    def set_frame_streaming(self, streaming, quiet=False):
+        """Set the camera streaming mode"""
+        if not pyro_client_matches(self._config.control_ips):
+            return CommandStatus.InvalidControlIP
+
+        with TryLock(self._command_lock) as success:
+            if not success:
+                return CommandStatus.Blocked
+
+            if self._status == CameraStatus.Disabled:
+                return CommandStatus.CameraNotInitialized
+
+            if self._status != CameraStatus.Idle:
+                return CommandStatus.CameraNotIdle
+
+            self.__set_frame_streaming(streaming)
+
+            if not quiet:
+                log.info(self._config.log_name, 'Streaming set to {}'.format(streaming))
+            return CommandStatus.Succeeded
 
     @Pyro4.expose
     def initialize(self):
@@ -664,9 +740,10 @@ class CameraDaemon:
 
                 self._mode_name = mode_name.value.decode('ascii')
 
+                self._stream_frames = True
                 status = driver.SetQHYCCDStreamMode(handle, 1)
                 if status != QHYStatus.Success:
-                    print('failed to set single frame mode with status {}'.format(status))
+                    print('failed to set stream mode with status {}'.format(status))
                     return CommandStatus.Failed
 
                 status = driver.InitQHYCCD(handle)
@@ -778,6 +855,7 @@ class CameraDaemon:
               exposure: Exposure time in seconds
               gain: Gain setting
               offset: Offset (bias) setting
+              stream: stream (live) exposures or take individual frames
            Any properties not specified in params will be reset to its default
 
            The params dictionary should be validated using the
@@ -824,6 +902,10 @@ class CameraDaemon:
 
             if not quiet:
                 log.info(self._config.log_name, 'Offset set to {}'.format(self._offset))
+
+            self.__set_frame_streaming(params.get('stream', True))
+            if not quiet:
+                log.info(self._config.log_name, 'Streaming set to {}'.format(self._stream_frames))
 
             return CommandStatus.Succeeded
 
