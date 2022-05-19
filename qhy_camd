@@ -187,6 +187,9 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
                 ('GPS-PPSD', gps.PPSDelta, 'number of oscillator counts between PPS pulses')
             ]
 
+            # Enabling the GPS box overwrites the first 5 rows of image data
+            frame['image_y1'] += 5
+
         header = [
             (None, None, None),
             ('COMMENT', ' ---                DATE/TIME                --- ', ''),
@@ -224,6 +227,15 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
                 frame['image_x1'], frame['image_x2'],
                 frame['image_y1'], frame['image_y2']),
              '[x1:x2,y1:y2] image region (image coords)'),
+            # TODO: These will need to change if windowing is implemented!
+            ('BIAS-RGN', '[{}:{},{}:{}]'.format(
+                1, 9600,
+                6391, 6422),
+             '[x1:x2,y1:y2] overscan region (image coords)'),
+            ('DARK-RGN', '[{}:{},{}:{}]'.format(
+                1, 22,
+                1, 6388),
+             '[x1:x2,y1:y2] masked dark region (image coords)'),
             ('EXPCNT', frame['exposure_count'], 'running exposure count since EXPCREF'),
             ('EXPCREF', frame['exposure_count_reference'], 'date the exposure counter was reset'),
         ] + gps_header
