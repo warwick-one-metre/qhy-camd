@@ -13,7 +13,7 @@
   "offset": 30,
   "use_gpsbox": true,
   "camera_id": "CAM2",
-  "output_path": "/var/tmp/",
+  "output_path": "/data/incoming/",
   "output_prefix": "cam2",
   "expcount_path": "/var/tmp/cam2-counter.json"
 }
