@@ -655,6 +655,12 @@ class CameraDaemon:
                 print('failed to set 16bit readout with status {}'.format(status))
                 return False
 
+            if self._config.use_gpsbox:
+                status = self._driver.SetQHYCCDParam(self._handle, QHYControl.GPS, c_double(1))
+                if status != QHYStatus.Success:
+                    print('failed to set GPS box with status {}'.format(status))
+                    return CommandStatus.Failed
+
     @Pyro4.expose
     def set_frame_streaming(self, streaming, quiet=False):
         """Set the camera streaming mode"""
