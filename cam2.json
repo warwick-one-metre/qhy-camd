@@ -1,9 +1,9 @@
 {
   "daemon": "clasp_camera_2",
-  "pipeline_daemon": "clasp_pipeline",
+  "pipeline_daemon": "clasp_pipeline_2",
   "pipeline_handover_timeout": 10,
   "log_name": "qhy_camd@cam2",
-  "control_machines": ["CLASPTCS", "CLASPDAS1"],
+  "control_machines": ["CLASPTCS", "CLASPDAS1", "CLASPDAS2"],
   "camera_device_id": "QHY600M-4714d44c9ff6dc6db",
   "cooler_setpoint": -5,
   "cooler_update_delay": 5,

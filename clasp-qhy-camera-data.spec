@@ -1,5 +1,5 @@
 Name:      clasp-qhy-camera-data
-Version:   20220519
+Version:   20220520
 Release:   0
 Url:       https://github.com/warwick-one-metre/qhy-camd
 Summary:   Camera configuration for CLASP telescope.
