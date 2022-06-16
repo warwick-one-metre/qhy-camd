@@ -3,7 +3,7 @@
   "pipeline_daemon": "clasp_pipeline_2",
   "pipeline_handover_timeout": 10,
   "log_name": "qhy_camd@cam2",
-  "control_machines": ["CLASPTCS", "CLASPDAS1", "CLASPDAS2"],
+  "control_machines": ["CLASPTCS", "CLASPDAS1"],
   "camera_device_id": "QHY600M-4714d44c9ff6dc6db",
   "cooler_setpoint": -5,
   "cooler_update_delay": 5,
@@ -13,7 +13,7 @@
   "offset": 30,
   "use_gpsbox": true,
   "camera_id": "CAM2",
-  "output_path": "/data/incoming/",
+  "output_path": "D:/data/incoming/",
   "output_prefix": "cam2",
-  "expcount_path": "/var/tmp/cam2-counter.json"
+  "expcount_path": "D:/cam2-counter.json"
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3
 #
 # This file is part of qhy-camd.
 #
@@ -31,6 +31,7 @@ import json
 from multiprocessing import Process, Queue, Value
 import os.path
 import pathlib
+import platform
 import shutil
 import threading
 from astropy.io import fits
@@ -699,7 +700,13 @@ class CameraDaemon:
             self._status = CameraStatus.Initializing
             print('initializing driver')
 
-            driver = CDLL('/usr/local/lib/libqhyccd.so')
+            if platform.system() == 'Windows':
+                from ctypes import WinDLL
+                driver = WinDLL(r'C:\Program Files\QHYCCD\AllInOne\sdk\x64\qhyccd.dll')
+            else:
+                from ctypes import CDLL
+                driver = CDLL('/usr/local/lib/libqhyccd.so')
+
             driver.OpenQHYCCD.restype = POINTER(c_uint32)
             driver.GetQHYCCDParam.restype = c_double
             handle = None
