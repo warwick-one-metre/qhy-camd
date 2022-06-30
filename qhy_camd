@@ -26,7 +26,7 @@
 
 import argparse
 from ctypes import c_bool, c_double, c_int, c_uint8, c_uint16, c_uint32, c_void_p
-from ctypes import byref, create_string_buffer, Structure, CDLL, POINTER
+from ctypes import byref, create_string_buffer, Structure, POINTER
 import json
 from multiprocessing import Process, Queue, Value
 import os.path
@@ -555,7 +555,6 @@ class CameraDaemon:
                 })
 
                 self._exposure_count += 1
-                first_sequence_frame = False
 
                 # Save updated counts to disk
                 with open(self._counter_filename, 'w') as outfile:
@@ -636,7 +635,7 @@ class CameraDaemon:
 
     def __set_frame_streaming(self, streaming):
         if self._stream_frames == streaming:
-            return
+            return True
 
         with self._driver_lock:
             status = self._driver.SetQHYCCDStreamMode(self._handle, 1 if streaming else 0)
@@ -665,7 +664,9 @@ class CameraDaemon:
                 status = self._driver.SetQHYCCDParam(self._handle, QHYControl.GPS, c_double(1))
                 if status != QHYStatus.Success:
                     print('failed to set GPS box with status {}'.format(status))
-                    return CommandStatus.Failed
+                    return False
+
+            return True
 
     @Pyro4.expose
     def set_frame_streaming(self, streaming, quiet=False):
@@ -683,7 +684,8 @@ class CameraDaemon:
             if self._status != CameraStatus.Idle:
                 return CommandStatus.CameraNotIdle
 
-            self.__set_frame_streaming(streaming)
+            if not self.__set_frame_streaming(streaming):
+                return CommandStatus.Failed
 
             if not quiet:
                 log.info(self._config.log_name, 'Streaming set to {}'.format(streaming))
@@ -705,12 +707,14 @@ class CameraDaemon:
             self._status = CameraStatus.Initializing
             print('initializing driver')
 
+            # pylint: disable=import-outside-toplevel
             if platform.system() == 'Windows':
                 from ctypes import WinDLL
                 driver = WinDLL(r'C:\Program Files\QHYCCD\AllInOne\sdk\x64\qhyccd.dll')
             else:
                 from ctypes import CDLL
                 driver = CDLL('/usr/local/lib/libqhyccd.so')
+            # pylint: enable=import-outside-toplevel
 
             driver.OpenQHYCCD.restype = POINTER(c_uint32)
             driver.GetQHYCCDParam.restype = c_double
@@ -933,7 +937,9 @@ class CameraDaemon:
             if not quiet:
                 log.info(self._config.log_name, 'Offset set to {}'.format(self._offset))
 
-            self.__set_frame_streaming(params.get('stream', True))
+            if not self.__set_frame_streaming(params.get('stream', True)):
+                return CommandStatus.Failed
+
             if not quiet:
                 log.info(self._config.log_name, 'Streaming set to {}'.format(self._stream_frames))
 
