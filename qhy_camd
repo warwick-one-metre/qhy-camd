@@ -191,6 +191,11 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
             # Enabling the GPS box overwrites the first 5 rows of image data
             frame['image_y1'] += 5
 
+        if frame['cooler_setpoint'] is not None:
+            setpoint_header = ('TEMP-SET', frame['cooler_setpoint'], '[deg c] cmos temperature set point')
+        else:
+            setpoint_header = ('COMMENT', ' TEMP-SET not available', '')
+
         header = [
             (None, None, None),
             ('COMMENT', ' ---                DATE/TIME                --- ', ''),
@@ -216,7 +221,7 @@ def process_frames(process_queue, stop_signal, camera_id, camera_device_id, use_
              '[deg c] cmos temperature at end of exposure'),
             ('TEMP-MOD', CoolerMode.label(frame['cooler_mode']), 'temperature control mode'),
             ('TEMP-PWR', round(frame['cooler_pwm'] / 2.55), '[%] cooler power'),
-            ('TEMP-SET', frame['cooler_setpoint'], '[deg c] cmos temperature set point'),
+            setpoint_header,
             ('TEMP-LCK', frame['cooler_mode'] == CoolerMode.Locked, 'cmos temperature is locked to set point'),
             ('CAM-XBIN', 1, '[px] x binning'),
             ('CAM-YBIN', 1, '[px] y binning'),
